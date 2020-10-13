@@ -49,6 +49,7 @@ constexpr float dx = 0.01f;
 constexpr float k = 0.025f;
 constexpr float temp = 100.0f;  // Initial temperature.
 
+
 //************************************
 // Function description: display input parameters used for this sample.
 //************************************
@@ -95,14 +96,14 @@ float* ComputeHeatDeviceParallel(float* arr, float* arr_next, float C,
       // Iterate over timesteps
       for (i = 1; i <= num_iter; i++) {
         if (i % 2 != 0) {
-          q.submit([&](auto& h) {
+          q.submit([&](sycl::handler& h) {
             // The size of memory amount that will be given to the buffer.
             range<1> num_items{num_p + 2};
 
             accessor temperature(temperature_buf, h);
             accessor temperature_next(temperature_next_buf, h);
 
-            h.parallel_for(num_items, [=](id<1> k) {
+            h.parallel_for<class kernelx>(num_items, [=](id<1> k) {
               size_t gid = k.get(0);
 
               if (gid == 0) {
@@ -124,7 +125,7 @@ float* ComputeHeatDeviceParallel(float* arr, float* arr_next, float C,
             accessor temperature(temperature_buf, h);
             accessor temperature_next(temperature_next_buf, h);
 
-            h.parallel_for(num_items, [=](id<1> k) {
+            h.parallel_for<class kernely>(num_items, [=](id<1> k) {
               size_t gid = k.get(0);
 
               if (gid == 0) {
