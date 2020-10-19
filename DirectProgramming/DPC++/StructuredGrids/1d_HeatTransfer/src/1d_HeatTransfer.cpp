@@ -199,7 +199,7 @@ void ComputeHeatUSM(float C, size_t num_p, size_t num_iter,
   // Start timer
   dpc_common::TimeInterval time;
 
-  // for each timesteps
+  // for each timestep
   for (size_t i = 0; i < num_iter; i++) {
     auto step =
       [=](id<1> idx) {
@@ -229,6 +229,175 @@ void ComputeHeatUSM(float C, size_t num_p, size_t num_iter,
   free(arr_next, q);
 }
 
+//
+// Contains SYCL device + extra info
+//
+class Device {
+public:
+  queue queue;
+  device sycl_device;
+  float* arr;
+  float* arr_next;
+  size_t num_points;
+  size_t host_offset;
+  event device_event;
+  event host_event;
+};
+
+vector<Device>* GetDevices(size_t num_points) {
+  vector<platform> platforms = platform::get_platforms();
+  if (platforms.size() < 1) {
+    cout << "  No platforms available.\n";
+    return 0;
+  }
+
+  // default to 1st platform. Get all the GPUs
+  platform& p = platforms[0];
+  cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
+  //vector<device> sycl_devices = p.get_devices(info::device_type::gpu);
+  vector<device> sycl_devices = p.get_devices();
+  int num_devices = sycl_devices.size();
+  cout << "  Number of GPUs: " << num_devices << "\n";
+  if (num_devices < 1) {
+    cout << "  No devices available.\n";
+    return 0;
+  }
+
+  // Create queues for each device
+  auto* devices = new vector<Device>(num_devices);
+  property_list q_prop{property::queue::in_order()};
+  int slice_size = num_points / num_devices;
+  int slice_bytes = sizeof(float) * slice_size;
+  for (int i = 0; i < num_devices; i++) {
+    auto& d = (*devices)[i];
+    d.sycl_device = sycl_devices[i];
+    d.queue = queue(d.sycl_device, dpc_common::exception_handler, q_prop);
+  }
+
+  return devices;
+}
+
+//
+// Compute heat on the device using multiple devices
+//
+// Slice the 1d temperature array into contiguous chunks and
+// distribute among the devices. After each device computes the new
+// temperature for the points in its slide, we must exchange the
+// boundaries between devices for the next step.
+//
+void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
+			    float* arr_CPU) {
+  cout << "Using multi-device\n";
+
+  auto& devices = *GetDevices(num_points);
+  int num_devices = devices.size();
+
+  // Create the initial temperature on host
+  float* arr_host = new float[num_points + 2];
+  float* arr_host_next = new float[num_points + 2];
+  Initialize(arr_host, arr_host_next, num_points + 2);
+
+  // Allocate memory on the devices and initialize from host.
+  size_t device_points = num_points/num_devices;
+  size_t remainder_points = num_points % num_devices;
+  // offset into host array, +1 because host array contains extra
+  // point on the left
+  size_t host_offset = 1;
+  for (int i = 0; i < num_devices; i++) {
+    auto& d = devices[i];
+    // Divide points among devices equally, distribute remainder among
+    // first devices
+    d.num_points = device_points + (i < remainder_points);
+    cout << "Num points: " << d.num_points << "\n";
+    d.arr = malloc_shared<float>(d.num_points + 2, d.queue);
+    d.arr_next = malloc_shared<float>(d.num_points + 2, d.queue);
+
+    // Initialize device memory from host array. Each device has extra
+    // point on left and right that overlaps with neighbor
+    d.host_offset = host_offset;
+    // size is + 2 and offset is -1 because of the overlap
+    size_t s = sizeof(*d.arr) * (d.num_points + 2);
+    memcpy(d.arr, arr_host + d.host_offset - 1, s);
+    memcpy(d.arr_next, arr_host_next + d.host_offset - 1, s);
+    host_offset += d.num_points;
+  }
+
+  // Start timer
+  dpc_common::TimeInterval time;
+
+  // for each timestep
+  for (size_t i = 0; i < num_iter; i++) {
+
+    // queue the device steps that compute the temperature
+    for (int i = 0; i < num_devices; i++) {
+      auto& d = devices[i];
+      float* d_arr = d.arr;
+      float* d_arr_next = d.arr_next;
+      auto step =
+	[=](id<1> idx) {
+	  sycl::stream << "device: " << idx << "\n";
+	  size_t k = idx + 1;
+	  d_arr_next[k] =
+	    C * (d_arr[k + 1] - 2 * d_arr[k] + d_arr[k - 1]) + d_arr[k];
+	};
+      // Wait for the host step on left and this one to finish
+      vector<event> events{d.host_event};
+      if (i != 0)
+	events.push_back(devices[i-1].host_event);
+      d.device_event = d.queue.parallel_for(range{d.num_points}, events, step);
+    }
+
+    // queue the host steps that swaps the boundaries between devices
+    for (int i = 0; i < num_devices; i++) {
+      auto& d = devices[i];
+      auto handler = 
+	[&](auto& h) {
+	  auto step = 
+	    [=]() {
+	      cout << "host\n";
+	      // swap boundaries with the neighbor on the right
+	      if (i == num_devices-1) {
+		d.arr_next[d.num_points+1] = d.arr_next[d.num_points];
+	      } else {
+		auto& d_right = devices[i+1];
+		// The device computes 1..num_points
+		// 0 & num_points+1 are copies of the neighbor
+		d.arr_next[d.num_points+1] = d_right.arr_next[1];
+		d_right.arr_next[0] = d.arr_next[d.num_points];
+	      }
+	    };
+      
+	  // Wait for this device and neighbor on right to finish
+	  vector<event> events{d.device_event};
+	  if (i != num_devices-1)
+	    events.push_back(devices[i+1].device_event);
+	  event::wait_and_throw(events);
+	  h.codeplay_host_task(step);
+	};
+	d.host_event = d.queue.submit(handler);
+    }
+
+    // Swap arrays for next step
+    for (auto& d : devices)
+      swap(d.arr, d.arr_next);
+  }
+
+  // Wait for all the timesteps to complete
+  for (auto& d : devices)
+    d.device_event.wait_and_throw();
+    
+  // Display time used to process all time steps
+  cout << "  Elapsed time: " << time.Elapsed() << " sec\n";
+
+  // Copy from devices to host
+  for (auto& d : devices)
+    memcpy(arr_host + d.host_offset - 1, d.arr, d.num_points+1);
+    
+  CompareResults("multi-device", arr_host, arr_CPU, num_points, C);
+
+  free(arr_host);
+  free(arr_host_next);
+}
 
 //
 // Compute heat serially on the host
@@ -287,6 +456,7 @@ int main(int argc, char* argv[]) {
   try {
     ComputeHeatBuffer(C, n_point, n_iteration, final_CPU);
     ComputeHeatUSM(C, n_point, n_iteration, final_CPU);
+    ComputeHeatMultiDevice(C, n_point, n_iteration, final_CPU);
   } catch (sycl::exception e) {
     cout << "SYCL exception caught: " << e.what() << "\n";
     failures++;
