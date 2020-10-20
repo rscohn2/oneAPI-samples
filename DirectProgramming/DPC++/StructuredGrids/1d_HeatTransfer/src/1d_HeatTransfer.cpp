@@ -308,7 +308,6 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
     // Divide points among devices equally, distribute remainder among
     // first devices
     d.num_points = device_points + (i < remainder_points);
-    cout << "Num points: " << d.num_points << "\n";
     d.arr = malloc_shared<float>(d.num_points + 2, d.queue);
     d.arr_next = malloc_shared<float>(d.num_points + 2, d.queue);
 
@@ -333,18 +332,23 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
       auto& d = devices[i];
       float* d_arr = d.arr;
       float* d_arr_next = d.arr_next;
-      auto step =
-	[=](id<1> idx) {
-	  sycl::stream << "device: " << idx << "\n";
-	  size_t k = idx + 1;
-	  d_arr_next[k] =
-	    C * (d_arr[k + 1] - 2 * d_arr[k] + d_arr[k - 1]) + d_arr[k];
+      auto handler =
+	[&](sycl::handler &h) {
+	  auto step =
+	    [=](id<1> idx) {
+	      size_t k = idx + 1;
+	      d_arr_next[k] =
+		C * (d_arr[k + 1] - 2 * d_arr[k] + d_arr[k - 1]) + d_arr[k];
+	    };
+		   
+	  // Wait for the host step on left and this one to finish
+	  vector<event> events{d.host_event};
+	  if (i != 0)
+	    events.push_back(devices[i-1].host_event);
+	  event::wait_and_throw(events);
+	  h.parallel_for(range{d.num_points}, step);
 	};
-      // Wait for the host step on left and this one to finish
-      vector<event> events{d.host_event};
-      if (i != 0)
-	events.push_back(devices[i-1].host_event);
-      d.device_event = d.queue.parallel_for(range{d.num_points}, events, step);
+      d.device_event = d.queue.submit(handler);
     }
 
     // queue the host steps that swaps the boundaries between devices
@@ -354,7 +358,6 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
 	[&](auto& h) {
 	  auto step = 
 	    [=]() {
-	      cout << "host\n";
 	      // swap boundaries with the neighbor on the right
 	      if (i == num_devices-1) {
 		d.arr_next[d.num_points+1] = d.arr_next[d.num_points];
@@ -391,8 +394,8 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
 
   // Copy from devices to host
   for (auto& d : devices)
-    memcpy(arr_host + d.host_offset - 1, d.arr, d.num_points+1);
-    
+    memcpy(arr_host + d.host_offset - 1, d.arr, sizeof(float) * d.num_points+1);
+  
   CompareResults("multi-device", arr_host, arr_CPU, num_points, C);
 
   free(arr_host);
