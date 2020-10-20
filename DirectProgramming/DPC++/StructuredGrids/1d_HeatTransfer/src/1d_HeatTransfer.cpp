@@ -256,6 +256,9 @@ vector<Device>* GetDevices(size_t num_points) {
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
   //vector<device> sycl_devices = p.get_devices(info::device_type::gpu);
   vector<device> sycl_devices = p.get_devices();
+#if defined(FAKE_GPUS)
+  sycl_devices.push_back(sycl_devices[0]);
+#endif
   int num_devices = sycl_devices.size();
   cout << "  Number of GPUs: " << num_devices << "\n";
   if (num_devices < 1) {
@@ -268,10 +271,11 @@ vector<Device>* GetDevices(size_t num_points) {
   property_list q_prop{property::queue::in_order()};
   int slice_size = num_points / num_devices;
   int slice_bytes = sizeof(float) * slice_size;
+  context ctxt{sycl_devices};
   for (int i = 0; i < num_devices; i++) {
     auto& d = (*devices)[i];
     d.sycl_device = sycl_devices[i];
-    d.queue = queue(d.sycl_device, dpc_common::exception_handler, q_prop);
+    d.queue = queue(ctxt, d.sycl_device, dpc_common::exception_handler, q_prop);
   }
 
   return devices;
@@ -360,7 +364,7 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
 	    [=]() {
 	      // swap boundaries with the neighbor on the right
 	      if (i == num_devices-1) {
-		d.arr_next[d.num_points+1] = d.arr_next[d.num_points];
+		d.arr_next[d.num_points+1] = d.arr[d.num_points];
 	      } else {
 		auto& d_right = devices[i+1];
 		// The device computes 1..num_points
@@ -394,7 +398,7 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
 
   // Copy from devices to host
   for (auto& d : devices)
-    memcpy(arr_host + d.host_offset - 1, d.arr, sizeof(float) * d.num_points+1);
+    memcpy(arr_host + d.host_offset - 1, d.arr, sizeof(float) * (d.num_points + 2));
   
   CompareResults("multi-device", arr_host, arr_CPU, num_points, C);
 
