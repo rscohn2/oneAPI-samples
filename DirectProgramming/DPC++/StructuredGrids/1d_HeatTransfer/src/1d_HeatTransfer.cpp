@@ -256,8 +256,10 @@ vector<Device>* GetDevices(size_t num_points) {
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
   //vector<device> sycl_devices = p.get_devices(info::device_type::gpu);
   vector<device> sycl_devices = p.get_devices();
-#if defined(FAKE_GPUS)
-  sycl_devices.push_back(sycl_devices[0]);
+  //#define FAKE_GPUS 7
+#if defined(FAKE_GPUS) && FAKE_GPUS > 0
+  for (int i = 0; i < FAKE_GPUS; i++)
+    sycl_devices.push_back(sycl_devices[0]);
 #endif
   int num_devices = sycl_devices.size();
   cout << "  Number of GPUs: " << num_devices << "\n";
@@ -271,11 +273,10 @@ vector<Device>* GetDevices(size_t num_points) {
   property_list q_prop{property::queue::in_order()};
   int slice_size = num_points / num_devices;
   int slice_bytes = sizeof(float) * slice_size;
-  context ctxt{sycl_devices};
   for (int i = 0; i < num_devices; i++) {
     auto& d = (*devices)[i];
     d.sycl_device = sycl_devices[i];
-    d.queue = queue(ctxt, d.sycl_device, dpc_common::exception_handler, q_prop);
+    d.queue = queue(d.sycl_device, dpc_common::exception_handler, q_prop);
   }
 
   return devices;
