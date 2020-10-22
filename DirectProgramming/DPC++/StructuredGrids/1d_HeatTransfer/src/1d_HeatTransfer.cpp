@@ -245,12 +245,6 @@ public:
 };
 
 vector<Device>* GetDevices(size_t num_points) {
-  vector<platform> platforms = platform::get_platforms();
-  if (platforms.size() < 1) {
-    cout << "  No platforms available.\n";
-    return 0;
-  }
-
   // Select a platform with a GPU
   auto p = sycl::platform(sycl::gpu_selector());
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
@@ -392,7 +386,7 @@ void ComputeHeatMultiDevice(float C, size_t num_points, size_t num_iter,
 
   // Wait for all the timesteps to complete
   for (auto& d : devices)
-    d.device_event.wait_and_throw();
+    d.host_event.wait_and_throw();
     
   // Display time used to process all time steps
   cout << "  Elapsed time: " << time.Elapsed() << " sec\n";
