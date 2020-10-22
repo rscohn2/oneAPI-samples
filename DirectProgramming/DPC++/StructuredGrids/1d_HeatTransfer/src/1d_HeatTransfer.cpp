@@ -160,14 +160,15 @@ void ComputeHeatBuffer(float C, size_t num_p, size_t num_iter,
     swap(arr_buf, arr_buf_next);
   }
 
+  // Display time used to process all time steps
+  q.wait_and_throw();
+  cout << "  Elapsed time: " << t_par.Elapsed() << " sec\n";
+  
   // Deleting will wait for tasks to complete and write data back to host
   // Write back is not needed for arr_buf_next
   arr_buf_next->set_write_back(false);
   delete arr_buf;
   delete arr_buf_next;
-  
-  // Display time used to process all time steps
-  cout << "  Elapsed time: " << t_par.Elapsed() << " sec\n";
 
   CompareResults("buffer", ((num_iter % 2) == 0) ? arr_host : arr_host_next, arr_CPU, num_p, C);
 
@@ -245,19 +246,39 @@ public:
 };
 
 vector<Device>* GetDevices(size_t num_points) {
-  // Select a platform with a GPU
-  auto p = sycl::platform(sycl::gpu_selector());
+  int num_devices = 0;
+  
+  // Start with the most capable device
+  device d(default_selector{});
+  vector<device> sycl_devices;
+
+  // Add all the devices from the same platform that match in compute power
+  auto p = d.get_platform();
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
-  //vector<device> sycl_devices = p.get_devices(info::device_type::gpu);
-  vector<device> sycl_devices = p.get_devices();
+  auto compute_units = d.get_info<info::device::max_compute_units>();
+  for (auto & d : p.get_devices()) {
+    if (d.get_info<info::device::max_compute_units>() == compute_units) {
+      num_devices++;
+      sycl_devices.push_back(d);
+      cout << "    " << d.get_info<info::device::name>() << "\n";
+#define GPU_LIMIT 1
+#if defined(GPU_LIMIT)
+      if (num_devices == GPU_LIMIT)
+	break;
+#endif      
+    }
+  }
+
   //#define FAKE_GPUS 7
 #if defined(FAKE_GPUS) && FAKE_GPUS > 0
+  // Simulate a parallel system by making mulitple queues for the same
+  // device
   for (int i = 0; i < FAKE_GPUS; i++)
-    sycl_devices.push_back(sycl_devices[0]);
+    sycl_devices.push_back(d);
 #endif
-  int num_devices = sycl_devices.size();
+
   cout << "  Number of GPUs: " << num_devices << "\n";
-  if (num_devices < 1) {
+  if (num_devices == 0) {
     cout << "  No devices available.\n";
     return 0;
   }
