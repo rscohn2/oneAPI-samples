@@ -251,8 +251,8 @@ vector<Device>* GetDevices(size_t num_points) {
     return 0;
   }
 
-  // default to 1st platform. Get all the GPUs
-  platform& p = platforms[0];
+  // Select a platform with a GPU
+  auto p = sycl::platform(sycl::gpu_selector());
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
   //vector<device> sycl_devices = p.get_devices(info::device_type::gpu);
   vector<device> sycl_devices = p.get_devices();
