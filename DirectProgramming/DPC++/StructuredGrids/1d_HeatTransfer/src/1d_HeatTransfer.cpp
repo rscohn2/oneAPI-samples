@@ -231,14 +231,14 @@ void ComputeHeatUSM(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
 //
 vector<device> GetDevices() {
   vector<device> devices;
-  
+
   // Let the runtime pick the most capable device
   device d;
 
   auto p = d.get_platform();
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
   auto compute_units = d.get_info<info::device::max_compute_units>();
-  for (auto & d : p.get_devices()) {
+  for (auto &d : p.get_devices()) {
     // Add all the devices from the same platform that match in compute power
     if (d.get_info<info::device::max_compute_units>() == compute_units) {
       devices.push_back(d);
@@ -246,8 +246,8 @@ vector<device> GetDevices() {
       //#define GPU_LIMIT 1
 #if defined(GPU_LIMIT)
       if (devices.size() == GPU_LIMIT)
-	break;
-#endif      
+        break;
+#endif
     }
   }
 
@@ -273,8 +273,8 @@ vector<device> GetDevices() {
 //
 class InOut {
 public:
-  float *data;         // temperature array
-  event step;          // event for this time step
+  float *data; // temperature array
+  event step;  // event for this time step
 };
 
 //
@@ -285,21 +285,22 @@ public:
   Node *left;
   Node *right;
   queue queue;
-  InOut inout[2];      // input and output data
-  InOut *in;           // in data for this timestep
-  InOut *out;          // out data for this timestep
-  size_t num_p;        // number of points for this device
-  size_t host_offset;  // offset into host data for this node
+  InOut inout[2];     // input and output data
+  InOut *in;          // in data for this timestep
+  InOut *out;         // out data for this timestep
+  size_t num_p;       // number of points for this device
+  size_t host_offset; // offset into host data for this node
 };
 
 //
 // Compute heat on the device using multiple devices
 //
-void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
+void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
+                            float *arr_CPU) {
   cout << "Using multiple devices\n";
 
   // Create the initial temperature on host
-  float* arr_host[2];
+  float *arr_host[2];
   arr_host[0] = new float[num_p + 2];
   arr_host[1] = new float[num_p + 2];
   Initialize(arr_host[0], arr_host[1], num_p + 2);
@@ -314,7 +315,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_C
 
   // Divide points evenly among devices. Distribute remainder starting
   // from node 0
-  size_t device_p = num_p/num_devices;
+  size_t device_p = num_p / num_devices;
   size_t remainder_p = num_p % num_devices;
   vector<Node> nodes(num_devices);
   property_list q_prop{property::queue::in_order()};
@@ -323,9 +324,9 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_C
     Node &n = nodes[i];
     device &d = devices[i];
     if (i != 0)
-      n.left = &nodes[i-1];
-    if (i != num_devices-1)
-      n.right = &nodes[i+1];
+      n.left = &nodes[i - 1];
+    if (i != num_devices - 1)
+      n.right = &nodes[i + 1];
     n.num_p = device_p + (i < remainder_p);
     n.queue = queue(d, dpc_common::exception_handler, q_prop);
     n.host_offset = host_offset;
@@ -334,7 +335,8 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_C
     for (int i = 0; i < 2; i++) {
       float *data = malloc_device<float>(n.num_p + 2, n.queue);
       n.inout[i].data = data;
-      n.queue.memcpy(data, arr_host[i] + host_offset - 1, sizeof(float) * (n.num_p + 2));
+      n.queue.memcpy(data, arr_host[i] + host_offset - 1,
+                     sizeof(float) * (n.num_p + 2));
     }
 
     host_offset += n.num_p;
@@ -354,40 +356,35 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_C
       auto &q = n.queue;
       auto in = n.in->data;
       auto out = n.out->data;
-      
+
       // Update the temperature
       auto step = [=](id<1> idx) {
-		    size_t k = idx + 1;
-		    out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
-		  };
+        size_t k = idx + 1;
+        out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
+      };
       auto cg = [=](handler &h) {
-		  if (n.left)
-		    h.depends_on(n.left->in->step);
-		  if (n.right)
-		    h.depends_on(n.right->in->step);
-		  h.parallel_for(range{n.num_p}, step);
-		};
+        if (n.left)
+          h.depends_on(n.left->in->step);
+        if (n.right)
+          h.depends_on(n.right->in->step);
+        h.parallel_for(range{n.num_p}, step);
+      };
       n.out->step = q.submit(cg);
-      
+
       // Update the halo
       if (n.left) {
-	// Send halo left
-	Node &l = *n.left;
-	n.out->step = q.memcpy(&(l.out->data[l.num_p + 1]),
-			       &out[1],
-			       sizeof(float));
+        // Send halo left
+        Node &l = *n.left;
+        n.out->step =
+            q.memcpy(&(l.out->data[l.num_p + 1]), &out[1], sizeof(float));
       }
       if (n.right) {
-	// Send halo right
-	Node &r = *n.right;
-	n.out->step = q.memcpy(&(r.out->data[0]),
-			      &out[n.num_p],
-			      sizeof(float));
+        // Send halo right
+        Node &r = *n.right;
+        n.out->step = q.memcpy(&(r.out->data[0]), &out[n.num_p], sizeof(float));
       } else {
-	// no device on the right, update my halo
-	n.out->step = q.memcpy(&out[n.num_p + 1],
-			       &in[n.num_p],
-			       sizeof(float));
+        // no device on the right, update my halo
+        n.out->step = q.memcpy(&out[n.num_p + 1], &in[n.num_p], sizeof(float));
       }
     }
 
@@ -406,10 +403,9 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter, float *arr_C
   cout << "  Elapsed time: " << time.Elapsed() << " sec\n";
 
   // Copy back to host
-  for (auto& n : nodes) {
-    event e = n.queue.memcpy(arr_host[0] + n.host_offset - 1,
-			     n.in->data,
-			     sizeof(float) * (n.num_p + 2));
+  for (auto &n : nodes) {
+    event e = n.queue.memcpy(arr_host[0] + n.host_offset - 1, n.in->data,
+                             sizeof(float) * (n.num_p + 2));
     e.wait();
     free(n.in->data, n.queue);
     free(n.out->data, n.queue);
