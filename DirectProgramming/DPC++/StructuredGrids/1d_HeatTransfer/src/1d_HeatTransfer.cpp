@@ -232,7 +232,7 @@ vector<device> GetDevices() {
   vector<device> devices;
 
   // Let the runtime pick the most capable device
-  device d;
+  device d(default_selector{});
 
   auto p = d.get_platform();
   cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
