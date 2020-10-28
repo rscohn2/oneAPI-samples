@@ -250,7 +250,7 @@ vector<device> GetDevices() {
     }
   }
 
-  //#define FAKE_GPUS 7
+  #define FAKE_GPUS 1
 #if defined(FAKE_GPUS) && FAKE_GPUS > 0
   // Simulate a parallel system by duplicating the same device
   // device
@@ -281,6 +281,7 @@ public:
 //
 class Node {
 public:
+  int index;
   Node *left;
   Node *right;
   queue queue;
@@ -322,8 +323,9 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   for (int i = 0; i < num_devices; i++) {
     Node &n = nodes[i];
     device &d = devices[i];
-    if (i != 0)
-      n.left = &nodes[i - 1];
+    n.left = (i == 0 ? nullptr : &nodes[i - 1]);
+    n.right = (i == num_devices-1 ? nullptr : &nodes[i + 1]);
+    
     if (i != num_devices - 1)
       n.right = &nodes[i + 1];
     n.num_p = device_p + (i < remainder_p);
@@ -331,6 +333,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     n.host_offset = host_offset;
     n.in = &n.inout[0];
     n.out = &n.inout[1];
+    n.index = i;
     for (int i = 0; i < 2; i++) {
       float *data = malloc_device<float>(n.num_p + 2, n.queue);
       n.inout[i].data = data;
@@ -350,8 +353,10 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
 
   // for each timestep
   for (size_t i = 0; i < num_iter; i++) {
+    cout << "Time step " << i << std::endl;
     // for each device
     for (auto &n : nodes) {
+      cout << "  node " << n.index << std::endl;
       auto &q = n.queue;
       auto in = n.in->data;
       auto out = n.out->data;
@@ -362,13 +367,19 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
         out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
       };
       auto cg = [=](handler &h) {
-        if (n.left)
-          h.depends_on(n.left->in->step);
-        if (n.right)
-          h.depends_on(n.right->in->step);
+		  if (n.left) {
+		    cout << "  depends on left" << std::endl;
+		    h.depends_on(n.left->in->step);
+		  }
+		  if (n.right) {
+		    cout << "  depends on right" << std::endl;
+		    h.depends_on(n.right->in->step);
+		  }
         h.parallel_for(range{n.num_p}, step);
       };
       n.out->step = q.submit(cg);
+
+      cout << "  queue temperature update" << std::endl;
 
       // Update the halo
       if (n.left) {
@@ -385,6 +396,8 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
         // no device on the right, update my halo
         n.out->step = q.memcpy(&out[n.num_p + 1], &in[n.num_p], sizeof(float));
       }
+
+      cout << "  queued halo update" << std::endl;
     }
 
     // Swap in/out for next step
