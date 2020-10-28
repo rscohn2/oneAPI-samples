@@ -42,6 +42,8 @@
 // e.g., $ONEAPI_ROOT/dev-utilities/<version>/include/dpc_common.hpp
 #include "dpc_common.hpp"
 
+#define FAKE_GPUS 7
+
 using namespace sycl;
 using namespace std;
 
@@ -250,7 +252,6 @@ vector<device> GetDevices() {
     }
   }
 
-  #define FAKE_GPUS 1
 #if defined(FAKE_GPUS) && FAKE_GPUS > 0
   // Simulate a parallel system by duplicating the same device
   // device
@@ -337,13 +338,14 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     for (int i = 0; i < 2; i++) {
       float *data = malloc_device<float>(n.num_p + 2, n.queue);
       n.inout[i].data = data;
-      n.queue.memcpy(data, arr_host[i] + host_offset - 1,
-                     sizeof(float) * (n.num_p + 2));
+      event e = n.queue.memcpy(data, arr_host[i] + host_offset - 1,
+			       sizeof(float) * (n.num_p + 2));
+      e.wait();
     }
 
     host_offset += n.num_p;
   }
-
+  
   //
   // Computation
   //
@@ -353,11 +355,13 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
 
   // for each timestep
   for (size_t i = 0; i < num_iter; i++) {
-    cout << "Time step " << i << std::endl;
     // for each device
     for (auto &n : nodes) {
-      cout << "  node " << n.index << std::endl;
+#if FAKE_GPUS > 0
+      auto &q = nodes[0].queue;
+#else
       auto &q = n.queue;
+#endif
       auto in = n.in->data;
       auto out = n.out->data;
 
@@ -368,18 +372,14 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
       };
       auto cg = [=](handler &h) {
 		  if (n.left) {
-		    cout << "  depends on left" << std::endl;
 		    h.depends_on(n.left->in->step);
 		  }
 		  if (n.right) {
-		    cout << "  depends on right" << std::endl;
 		    h.depends_on(n.right->in->step);
 		  }
         h.parallel_for(range{n.num_p}, step);
       };
       n.out->step = q.submit(cg);
-
-      cout << "  queue temperature update" << std::endl;
 
       // Update the halo
       if (n.left) {
@@ -396,8 +396,6 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
         // no device on the right, update my halo
         n.out->step = q.memcpy(&out[n.num_p + 1], &in[n.num_p], sizeof(float));
       }
-
-      cout << "  queued halo update" << std::endl;
     }
 
     // Swap in/out for next step
