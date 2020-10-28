@@ -108,121 +108,6 @@ void CompareResults(string prefix, float *device_results, float *host_results,
     cout << "  PASSED!\n";
 }
 
-//
-// Compute heat on the device using DPC++ buffer
-//
-void ComputeHeatBuffer(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
-  // Define device selector as 'default'
-  default_selector device_selector;
-
-  // Create a device queue using DPC++ class queue
-  queue q(device_selector, dpc_common::exception_handler);
-  cout << "Using buffers\n";
-  cout << "  Kernel runs on " << q.get_device().get_info<info::device::name>()
-       << "\n";
-
-  // Temperatures of the current and next iteration
-  float *arr_host = new float[num_p + 2];
-  float *arr_host_next = new float[num_p + 2];
-
-  Initialize(arr_host, arr_host_next, num_p + 2);
-
-  // Start timer
-  dpc_common::TimeInterval t_par;
-
-  auto *arr_buf = new buffer<float>(arr_host, range(num_p + 2));
-  auto *arr_buf_next = new buffer<float>(arr_host_next, range(num_p + 2));
-
-  // Iterate over timesteps
-  for (size_t i = 0; i < num_iter; i++) {
-    auto cg = [&](auto &h) {
-      accessor arr(*arr_buf, h);
-      accessor arr_next(*arr_buf_next, h);
-      auto step = [=](id<1> idx) {
-        size_t k = idx + 1;
-
-        if (k == num_p + 1) {
-          arr_next[k] = arr[k - 1];
-        } else {
-          arr_next[k] = C * (arr[k + 1] - 2 * arr[k] + arr[k - 1]) + arr[k];
-        }
-      };
-
-      h.parallel_for(range{num_p + 1}, step);
-    };
-    q.submit(cg);
-
-    // Swap arrays for next step
-    swap(arr_buf, arr_buf_next);
-  }
-
-  // Deleting will wait for tasks to complete and write data back to host
-  // Write back is not needed for arr_buf_next
-  arr_buf_next->set_write_back(false);
-  delete arr_buf;
-  delete arr_buf_next;
-
-  // Display time used to process all time steps
-  cout << "  Elapsed time: " << t_par.Elapsed() << " sec\n";
-
-  CompareResults("buffer", ((num_iter % 2) == 0) ? arr_host : arr_host_next,
-                 arr_CPU, num_p, C);
-
-  delete[] arr_host;
-  delete[] arr_host_next;
-}
-
-//
-// Compute heat on the device using USM
-//
-void ComputeHeatUSM(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
-  // Timesteps depend on each other, so make the queue inorder
-  property_list properties{property::queue::in_order()};
-  // Define device selector as 'default'
-  default_selector device_selector;
-
-  // Create a device queue using DPC++ class queue
-  queue q(device_selector, dpc_common::exception_handler, properties);
-  cout << "Using USM\n";
-  cout << "  Kernel runs on " << q.get_device().get_info<info::device::name>()
-       << "\n";
-
-  // Temperatures of the current and next iteration
-  float *arr = malloc_shared<float>(num_p + 2, q);
-  float *arr_next = malloc_shared<float>(num_p + 2, q);
-
-  Initialize(arr, arr_next, num_p + 2);
-
-  // Start timer
-  dpc_common::TimeInterval time;
-
-  // for each timesteps
-  for (size_t i = 0; i < num_iter; i++) {
-    auto step = [=](id<1> idx) {
-      size_t k = idx + 1;
-      if (k == num_p + 1)
-        arr_next[k] = arr[k - 1];
-      else
-        arr_next[k] = C * (arr[k + 1] - 2 * arr[k] + arr[k - 1]) + arr[k];
-    };
-
-    q.parallel_for(range{num_p + 1}, step);
-
-    // Swap arrays for next step
-    swap(arr, arr_next);
-  }
-
-  // Wait for all the timesteps to complete
-  q.wait_and_throw();
-
-  // Display time used to process all time steps
-  cout << "  Elapsed time: " << time.Elapsed() << " sec\n";
-
-  CompareResults("usm", arr, arr_CPU, num_p, C);
-
-  free(arr, q);
-  free(arr_next, q);
-}
 
 //
 // Returns a vector of SYCL devices including the most capable device
@@ -363,41 +248,18 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
 
       // Update the temperature
       auto step = [=](id<1> idx) {
-        size_t k = idx + 1;
-        out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
       };
       auto cg = [=](handler &h) {
-		  if (n.left) {
-		    cout << "  depends on left" << std::endl;
-		    h.depends_on(n.left->in->step);
-		  }
 		  if (n.right) {
-		    cout << "  depends on right" << std::endl;
+		    cout << "  node " << n.index << " depends on right" << std::endl;
 		    h.depends_on(n.right->in->step);
+		    cout << "  node " << n.index << " depends done" << std::endl;
 		  }
         h.parallel_for(range{n.num_p}, step);
       };
+      cout << "    submit" << std::endl;
       n.out->step = q.submit(cg);
-
-      cout << "  queue temperature update" << std::endl;
-
-      // Update the halo
-      if (n.left) {
-        // Send halo left
-        Node &l = *n.left;
-        n.out->step =
-            q.memcpy(&(l.out->data[l.num_p + 1]), &out[1], sizeof(float));
-      }
-      if (n.right) {
-        // Send halo right
-        Node &r = *n.right;
-        n.out->step = q.memcpy(&(r.out->data[0]), &out[n.num_p], sizeof(float));
-      } else {
-        // no device on the right, update my halo
-        n.out->step = q.memcpy(&out[n.num_p + 1], &in[n.num_p], sizeof(float));
-      }
-
-      cout << "  queued halo update" << std::endl;
+      cout << "      submit done" << std::endl;
     }
 
     // Swap in/out for next step
@@ -488,8 +350,6 @@ int main(int argc, char *argv[]) {
       ComputeHeatHostSerial(heat_CPU, heat_CPU_next, C, n_point, n_iteration);
 
   try {
-    ComputeHeatBuffer(C, n_point, n_iteration, final_CPU);
-    ComputeHeatUSM(C, n_point, n_iteration, final_CPU);
     ComputeHeatMultiDevice(C, n_point, n_iteration, final_CPU);
   } catch (sycl::exception e) {
     cout << "SYCL exception caught: " << e.what() << "\n";
