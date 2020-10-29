@@ -331,6 +331,12 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     if (i != num_devices - 1)
       n.right = &nodes[i + 1];
     n.num_p = device_p + (i < remainder_p);
+#if FAKE_GPUS > 0
+    if (i > 0)
+      n.queue = nodes[0].queue;
+    else
+#endif    
+      n.queue = queue(d, dpc_common::exception_handler, q_prop);
     n.queue = queue(d, dpc_common::exception_handler, q_prop);
     n.host_offset = host_offset;
     n.in = &n.inout[0];
