@@ -42,7 +42,7 @@
 // e.g., $ONEAPI_ROOT/dev-utilities/<version>/include/dpc_common.hpp
 #include "dpc_common.hpp"
 
-#define FAKE_GPUS 7
+#define FAKE_GPUS 0
 
 using namespace sycl;
 using namespace std;
@@ -321,9 +321,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   vector<Node> nodes(num_devices);
   property_list q_prop{property::queue::in_order()};
   size_t host_offset = 1;
-  platform p = devices[0].get_platform();
   context ctxt(devices, dpc_common::exception_handler);
-  cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
   
   for (int i = 0; i < num_devices; i++) {
     Node &n = nodes[i];
@@ -334,7 +332,6 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     if (i != num_devices - 1)
       n.right = &nodes[i + 1];
     n.num_p = device_p + (i < remainder_p);
-    cout << "    Platform: " << d.get_platform().get_info<info::platform::name>() << "\n";
     n.queue = queue(ctxt, d, q_prop);
     n.host_offset = host_offset;
     n.in = &n.inout[0];
