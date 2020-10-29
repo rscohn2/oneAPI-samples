@@ -322,6 +322,10 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   vector<Node> nodes(num_devices);
   property_list q_prop{property::queue::in_order()};
   size_t host_offset = 1;
+  platform p = devices[0].get_platform();
+  context ctxt(devices, dpc_common::exception_handler);
+  cout << "  Platform: " << p.get_info<info::platform::name>() << "\n";
+  
   for (int i = 0; i < num_devices; i++) {
     Node &n = nodes[i];
     device &d = devices[i];
@@ -331,13 +335,8 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     if (i != num_devices - 1)
       n.right = &nodes[i + 1];
     n.num_p = device_p + (i < remainder_p);
-#if FAKE_GPUS > 0
-    if (i > 0)
-      n.queue = nodes[0].queue;
-    else
-#endif    
-      n.queue = queue(d, dpc_common::exception_handler, q_prop);
-    n.queue = queue(d, dpc_common::exception_handler, q_prop);
+    cout << "    Platform: " << d.get_platform().get_info<info::platform::name>() << "\n";
+    n.queue = queue(ctxt, d, q_prop);
     n.host_offset = host_offset;
     n.in = &n.inout[0];
     n.out = &n.inout[1];
@@ -364,11 +363,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   for (size_t i = 0; i < num_iter; i++) {
     // for each device
     for (auto &n : nodes) {
-#if FAKE_GPUS > 0
-      auto &q = nodes[0].queue;
-#else
       auto &q = n.queue;
-#endif
       auto in = n.in->data;
       auto out = n.out->data;
 
