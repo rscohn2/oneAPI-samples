@@ -43,8 +43,6 @@
 // e.g., $ONEAPI_ROOT/dev-utilities/<version>/include/dpc_common.hpp
 #include "dpc_common.hpp"
 
-#define FAKE_GPUS 0
-
 using namespace sycl;
 using namespace std;
 
@@ -53,6 +51,7 @@ constexpr float dx = 0.01f;
 constexpr float k = 0.025f;
 constexpr float initial_temperature = 100.0f; // Initial temperature.
 
+int n_devices = 0;
 int failures = 0;
 
 //
@@ -64,6 +63,7 @@ void Usage(const string &programName) {
   cout << programName << " <n> <i>\n\n";
   cout << " n : Number of points to simulate \n";
   cout << " i : Number of timesteps \n";
+  cout << " d : Number of devices \n";
 }
 
 //
@@ -253,12 +253,10 @@ vector<device> GetDevices() {
     }
   }
 
-#if defined(FAKE_GPUS) && FAKE_GPUS > 0
   // Simulate a parallel system by duplicating the same device
   // device
-  for (int i = 0; i < FAKE_GPUS; i++)
+  for (int i = devices.size(); i < n_devices; i++)
     devices.push_back(d);
-#endif
 
   cout << "  Number of Devices: " << devices.size() << "\n";
   if (devices.size() == 0) {
@@ -459,6 +457,8 @@ int main(int argc, char *argv[]) {
   try {
     int np = stoi(argv[1]);
     int ni = stoi(argv[2]);
+    if (argc == 4)
+      n_devices = stoi(argv[3]);
     if (np < 0 || ni < 0) {
       Usage(argv[0]);
       return -1;
