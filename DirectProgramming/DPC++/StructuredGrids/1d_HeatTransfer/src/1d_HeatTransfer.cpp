@@ -374,7 +374,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
 		  if (n.right) {
 		    h.depends_on(n.right->in->step);
 		  }
-        h.parallel_for(range{n.num_p}, step);
+		  h.parallel_for(range{n.num_p}, step);
       };
       n.out->step = q.submit(cg);
 

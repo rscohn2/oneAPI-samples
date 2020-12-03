@@ -4,8 +4,8 @@ cmake_minimum_required(VERSION 3.5)
 # CMakeLists.txt for 1d_HeatTransfer project
 project (1d_HeatTransfer)
 
-#set(CMAKE_CXX_COMPILER "dpcpp")
-set(CMAKE_CXX_COMPILER "clang++")
+set(CMAKE_CXX_COMPILER "dpcpp")
+#set(CMAKE_CXX_COMPILER "clang++")
 
 # Set default build type to RelWithDebInfo if not specified
 if (NOT CMAKE_BUILD_TYPE)
@@ -16,8 +16,9 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 include_directories(../../../../common)
-add_compile_options(-fsycl-unnamed-lambda -fsycl)
 add_compile_options(
+  #"-fsycl"
+  # "-fsycl" "-fsycl-unnamed-lambda" "-sycl-std=2020"
   "-Werror" "-Wall" "-Wpedantic" "-Wextra" "-fexceptions"
   "$<$<CONFIG:DEBUG>:-O0;-g3;-ggdb>"
   )
