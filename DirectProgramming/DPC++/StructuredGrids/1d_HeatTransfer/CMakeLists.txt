@@ -16,8 +16,13 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 include_directories(../../../../common)
-add_compile_options(-fsycl-unnamed-lambda)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fsycl -std=c++17")
+add_compile_options(-fsycl-unnamed-lambda -fsycl)
+add_compile_options(
+  "-Werror" "-Wall" "-Wpedantic" "-Wextra" "-fexceptions"
+  "$<$<CONFIG:DEBUG>:-O0;-g3;-ggdb>"
+  )
+
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fsycl -std=c++17")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lOpenCL -lsycl")
 

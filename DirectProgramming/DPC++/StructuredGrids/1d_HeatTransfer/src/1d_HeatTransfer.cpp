@@ -79,7 +79,7 @@ void Initialize(float *arr, float *arr_next, size_t num) {
 // Compare host and device results
 //
 void CompareResults(string prefix, float *device_results, float *host_results,
-                    size_t num_point, float C) {
+                    size_t num_point) {
   string path = prefix + "_error_diff.txt";
   float delta = 0.001f;
   float difference = 0.00f;
@@ -169,7 +169,7 @@ void ComputeHeatBuffer(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
   cout << "  Elapsed time: " << t_par.Elapsed() << " sec\n";
 
   CompareResults("buffer", ((num_iter % 2) == 0) ? arr_host : arr_host_next,
-                 arr_CPU, num_p, C);
+                 arr_CPU, num_p);
 
   delete[] arr_host;
   delete[] arr_host_next;
@@ -221,7 +221,7 @@ void ComputeHeatUSM(float C, size_t num_p, size_t num_iter, float *arr_CPU) {
   // Display time used to process all time steps
   cout << "  Elapsed time: " << time.Elapsed() << " sec\n";
 
-  CompareResults("usm", arr, arr_CPU, num_p, C);
+  CompareResults("usm", arr, arr_CPU, num_p);
 
   free(arr, q);
   free(arr_next, q);
@@ -311,7 +311,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   //
 
   vector<device> devices = GetDevices();
-  int num_devices = devices.size();
+  size_t num_devices = devices.size();
 
   // Divide points evenly among devices. Distribute remainder starting
   // from node 0
@@ -322,7 +322,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
   size_t host_offset = 1;
   context ctxt(devices, dpc_common::exception_handler);
   
-  for (int i = 0; i < num_devices; i++) {
+  for (size_t i = 0; i < num_devices; i++) {
     Node &n = nodes[i];
     device &d = devices[i];
     n.left = (i == 0 ? nullptr : &nodes[i - 1]);
@@ -418,7 +418,7 @@ void ComputeHeatMultiDevice(float C, size_t num_p, size_t num_iter,
     free(n.out->data, n.queue);
   }
 
-  CompareResults("multi-device", arr_host[0], arr_CPU, num_p, C);
+  CompareResults("multi-device", arr_host[0], arr_CPU, num_p);
 
   delete[] arr_host[0];
   delete[] arr_host[1];
