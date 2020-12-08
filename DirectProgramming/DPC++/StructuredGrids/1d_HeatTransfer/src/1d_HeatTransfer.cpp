@@ -254,7 +254,7 @@ public:
   size_t host_offset; // offset into host data for this node
 };
 
-typedef float (*Steps)(float C, vector<Node> &nodes, size_t num_steps);
+typedef double (*Steps)(float C, vector<Node> &nodes, size_t num_steps);
 
 #if 0
 void host_p2p_step(float C, vector<Node> &nodes, float *left_halo, float *right_halo) {
@@ -322,34 +322,45 @@ double host_usm_steps(float C, vector<Node> &nodes, size_t num_steps) {
   // for each device
   for (auto &n : nodes) {
     auto &q = n.queue;
+
+    // Pull out fields from Node because access from kernel does not
+    // allow class with non-trivial copy constructor
     auto in = n.in->data;
     auto out = n.out->data;
+    auto left = n.left;
+    auto right = n.right;
+    auto index = n.index;
+    auto num_p = n.num_p;
 
-    auto read_halo = [=]() {
-		       if (n.left)
-			      in[0] = right_halo[n.index-1];
-		       if (n.right)
-			      in[n.num_p+1] = left_halo[n.index+1];
-			    };
-    auto compute = [=](auto id) {
-		  size_t k = id + 1;
-		  out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
-		   };
-    auto write_halo = [=]() {
-		       if (n.left)
-			  left_halo[n.index] = out[0];
-		       if (n.right)
-			  right_halo[n.index] = out[n.num_p+1];
-		     };
-
+    auto read_halo =
+      [=]() {
+	if (left)
+	  in[0] = right_halo[index-1];
+	if (right)
+	  in[num_p+1] = left_halo[index+1];
+      };
+    auto compute =
+      [=](auto id) {
+	size_t k = id + 1;
+	out[k] = C * (in[k + 1] - 2 * in[k] + in[k - 1]) + in[k];
+      };
+    auto write_halo =
+      [=]() {
+	if (left)
+	  left_halo[index] = out[0];
+	if (right)
+	  right_halo[index] = out[num_p+1];
+	else
+	  out[num_p+1] = in[num_p];
+      };
 
     // Reading halo depends on left and right node finishing.
     // in_order queue enforces dependencies for this node
     vector<event> read_halo_deps;
     if (n.left)
-      read_halo_deps.push_back(n.left->in->step);
+      read_halo_deps.push_back(left->in->step);
     if (n.right)
-      read_halo_deps.push_back(n.right->in->step);
+      read_halo_deps.push_back(right->in->step);
 
     q.single_task(read_halo_deps, read_halo);
     q.parallel_for(n.num_p, compute);
@@ -543,7 +554,7 @@ int main(int argc, char *argv[]) {
   float C = (k * dt) / (dx * dx);
 
   // Compute heat serially on CPU for comparision
-  float *final_CPU = final_CPU =
+  float *final_CPU =
       ComputeHeatHostSerial(heat_CPU, heat_CPU_next, C, n_point, n_iteration);
 
   try {
