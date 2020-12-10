@@ -26,6 +26,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsycl")
 
 add_executable (1d_HeatTransfer src/1d_HeatTransfer.cpp)
 add_executable (test1 src/test1.cpp)
+add_executable (stencil src/stencil.cpp src/stencil_util.cpp)
 
 add_custom_target (run 
 	COMMAND 1d_HeatTransfer 100 1000 
@@ -33,6 +34,10 @@ add_custom_target (run
 )
 add_custom_target (run-test1
 	COMMAND test1 100 1000 
+	WORKING_DIRECTORY ${CMAKE_PROJECT_DIR}
+)
+add_custom_target (run-stencil
+	COMMAND stencil
 	WORKING_DIRECTORY ${CMAKE_PROJECT_DIR}
 )
 
